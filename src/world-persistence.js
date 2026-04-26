@@ -1,10 +1,9 @@
 /**
  * world-persistence.js
- * Auto-saves the world to disk every AUTOSAVE_MIN minutes.
- * Uses a simple JSON-based persistence layer compatible with prismarine-world.
+ * Auto-saves loaded chunks to disk every AUTOSAVE_MIN minutes.
  *
- * For full Anvil (Minecraft region) format support, swap the read/write
- * functions with prismarine-provider-anvil once that package is stable.
+ * Storage format: one JSON file per chunk key in WORLD_DIR.
+ * Uses defensive checks — gracefully skips chunks that don’t support serialisation.
  */
 
 'use strict';
@@ -16,9 +15,6 @@ const config = require('./config');
 
 let _saveInterval = null;
 
-/**
- * Ensure the world directory exists.
- */
 function ensureWorldDir() {
   const dir = path.resolve(config.WORLD_DIR);
   if (!fs.existsSync(dir)) {
@@ -28,57 +24,54 @@ function ensureWorldDir() {
   return dir;
 }
 
-/**
- * Start auto-saving the world every AUTOSAVE_MIN minutes.
- * @param {object} server  flying-squid server instance
- */
 function startAutosave(server) {
   const dir      = ensureWorldDir();
   const interval = config.AUTOSAVE_MIN * 60 * 1000;
 
-  log.info(`Auto-save every ${config.AUTOSAVE_MIN} min → ${dir}`);
+  log.info(`Auto-save every ${config.AUTOSAVE_MIN} min → ${path.resolve(config.WORLD_DIR)}`);
 
   _saveInterval = setInterval(async () => {
-    try {
-      await saveWorld(server, dir);
-    } catch (err) {
-      log.error('Auto-save failed:', err.message);
-    }
+    try { await saveWorld(server, dir); }
+    catch (err) { log.error('Auto-save failed:', err.message); }
   }, interval);
 
-  _saveInterval.unref(); // don't block process exit
+  _saveInterval.unref();
 }
 
-/**
- * Persist loaded chunks to disk as JSON files.
- * One file per chunk: world/<x>_<z>.json
- * @param {object} server
- * @param {string} dir
- */
 async function saveWorld(server, dir) {
-  let saved = 0;
+  // Support both flying-squid’s overworld.columns and a plain columns map
+  const columns =
+    server?.overworld?.columns ??
+    server?.world?.columns ??
+    null;
 
-  if (!server.overworld || !server.overworld.columns) {
-    log.debug('No loaded chunks to save');
+  if (!columns || typeof columns !== 'object') {
+    log.debug('No loaded chunks to save (world not initialised yet)');
     return;
   }
 
-  for (const [key, column] of Object.entries(server.overworld.columns)) {
+  let saved = 0;
+  let skipped = 0;
+
+  for (const [key, column] of Object.entries(columns)) {
     const filePath = path.join(dir, `${key}.json`);
     try {
-      fs.writeFileSync(filePath, JSON.stringify(column.toJson()), 'utf8');
+      let data;
+      if (typeof column.toJson  === 'function') data = column.toJson();
+      else if (typeof column.dump === 'function') data = column.dump();
+      else { skipped++; continue; }
+
+      fs.writeFileSync(filePath, JSON.stringify(data), 'utf8');
       saved++;
     } catch (err) {
-      log.warn(`Failed to save chunk ${key}:`, err.message);
+      log.warn(`Failed to save chunk ${key}: ${err.message}`);
     }
   }
 
-  if (saved > 0) log.info(`Auto-saved ${saved} chunk(s)`);
+  if (saved > 0 || skipped > 0)
+    log.info(`Auto-saved ${saved} chunk(s)${skipped ? `, skipped ${skipped}` : ''}`);
 }
 
-/**
- * Stop the auto-save interval (called on graceful shutdown).
- */
 function stopAutosave() {
   if (_saveInterval) {
     clearInterval(_saveInterval);

@@ -2,6 +2,12 @@ node_modules/
 .env
 *.log
 npm-debug.log*
+yarn-error.log
 .DS_Store
-world-data/
+world/
+data/
 *.pid
+coverage/
+.nyc_output/
+# keep package-lock.json out of accidental large commits
+# (it is still committed, just excluded from diffs in some tools)

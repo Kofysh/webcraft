@@ -2,11 +2,13 @@
  * plugins.js
  * Plugin loader — scans PLUGINS_DIR for *.js files and loads each one.
  *
- * A plugin is a JS file that exports a function:
- *   module.exports = function(server, config) { ... }
+ * Load order rules (applied in sequence):
+ *  1. Files prefixed with a number (00-, 01-, ...) are loaded first, in numeric order.
+ *  2. core-api.js is always skipped here — it is a library, not a plugin.
+ *  3. Remaining files are loaded alphabetically.
  *
- * The server instance is the flying-squid server object.
- * Plugins can listen to server events, register commands, etc.
+ * A plugin exports a single function:
+ *   module.exports = function(server, config) { ... }
  */
 
 'use strict';
@@ -15,6 +17,29 @@ const fs     = require('fs');
 const path   = require('path');
 const log    = require('./logger')('Plugins');
 const config = require('./config');
+
+// These filenames are helpers, not plugins — never auto-loaded
+const SKIP = new Set(['core-api.js']);
+
+function sortPluginFiles(files) {
+  const numbered = [];
+  const rest     = [];
+
+  for (const f of files) {
+    if (SKIP.has(f)) continue;
+    if (/^\d+[-_]/.test(f)) numbered.push(f);
+    else rest.push(f);
+  }
+
+  numbered.sort((a, b) => {
+    const na = parseInt(a);
+    const nb = parseInt(b);
+    return na - nb;
+  });
+
+  rest.sort();
+  return [...numbered, ...rest];
+}
 
 /**
  * Load all plugins from PLUGINS_DIR.
@@ -29,7 +54,8 @@ function loadPlugins(server) {
     return [];
   }
 
-  const files = fs.readdirSync(dir).filter((f) => f.endsWith('.js'));
+  const raw   = fs.readdirSync(dir).filter((f) => f.endsWith('.js') && !f.startsWith('.'));
+  const files = sortPluginFiles(raw);
 
   if (files.length === 0) {
     log.info('No plugins found');
@@ -47,10 +73,10 @@ function loadPlugins(server) {
         continue;
       }
       plugin(server, config);
-      log.info(`Loaded plugin: ${file}`);
+      log.info(`Loaded: ${file}`);
       loaded.push(file);
     } catch (err) {
-      log.error(`Failed to load plugin ${file}:`, err.message);
+      log.error(`Failed to load ${file}: ${err.message}`);
     }
   }
 
