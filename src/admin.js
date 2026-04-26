@@ -13,6 +13,11 @@
  *   POST /admin/ban/:username       Ban a player
  *   POST /admin/unban/:username     Unban a player
  *   GET  /admin/bans                List active bans
+ *   GET  /admin/whitelist           Get whitelist state
+ *   POST /admin/whitelist/on        Enable whitelist
+ *   POST /admin/whitelist/off       Disable whitelist
+ *   POST /admin/whitelist/add       Add player to whitelist { username }
+ *   POST /admin/whitelist/remove    Remove player from whitelist { username }
  *
  * Auth: cookie session (login form) OR Authorization: Bearer <ADMIN_TOKEN> for API calls.
  */
@@ -27,11 +32,10 @@ const config = require('./config');
 
 let _adminServer  = null;
 const sseClients  = new Set();
-const logBuffer   = [];   // last 200 lines kept in memory
+const logBuffer   = [];
 const MAX_BUFFER  = 200;
 
 // ---- Log interceptor -------------------------------------------------------
-// Monkey-patch console so every log line is also pushed to SSE clients.
 const _origStdout = process.stdout.write.bind(process.stdout);
 process.stdout.write = function (chunk, ...rest) {
   const line = typeof chunk === 'string' ? chunk.trim() : '';
@@ -53,15 +57,17 @@ const SESSIONS = new Set();
 
 function parseCookies(req) {
   const raw = req.headers.cookie || '';
-  return Object.fromEntries(raw.split(';').map((c) => c.trim().split('=').map(decodeURIComponent)));
+  return Object.fromEntries(
+    raw.split(';')
+      .map((c) => c.trim().split('=').map((s) => decodeURIComponent(s || '')))
+      .filter(([k]) => k)
+  );
 }
 
 function isAuthenticated(req) {
-  if (!config.ADMIN_TOKEN) return !config.ONLINE_MODE; // dev mode
-  // Bearer token (API calls)
+  if (!config.ADMIN_TOKEN) return !config.ONLINE_MODE;
   const bearer = (req.headers['authorization'] || '').replace('Bearer ', '');
   if (bearer === config.ADMIN_TOKEN) return true;
-  // Session cookie (dashboard)
   const cookies = parseCookies(req);
   return SESSIONS.has(cookies.wc_session);
 }
@@ -70,7 +76,7 @@ function randomToken() {
   return require('crypto').randomBytes(24).toString('hex');
 }
 
-// ---- Helpers ----------------------------------------------------------------
+// ---- Helpers ---------------------------------------------------------------
 function json(res, code, obj) {
   res.writeHead(code, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify(obj));
@@ -101,7 +107,7 @@ function readForm(req) {
   });
 }
 
-// ---- Ban helpers (reads data/bans.json if ban-manager plugin is active) -----
+// ---- Ban helpers -----------------------------------------------------------
 function getBans() {
   try {
     const file = path.join(process.cwd(), 'data', 'bans.json');
@@ -140,14 +146,15 @@ function dashboardHtml() {
   *{box-sizing:border-box;margin:0;padding:0}
   body{font-family:'Segoe UI',system-ui,sans-serif;background:#0f1117;color:#e2e8f0;min-height:100vh}
   header{background:#1a1d27;border-bottom:1px solid #2d3148;padding:14px 24px;display:flex;align-items:center;gap:12px}
-  header h1{font-size:1.15rem;font-weight:600;letter-spacing:.3px}
-  header span{font-size:.75rem;background:#2563eb;color:#fff;padding:2px 8px;border-radius:99px}
-  .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;padding:20px;max-width:1200px;margin:0 auto}
-  @media(max-width:720px){.grid{grid-template-columns:1fr}}
+  header h1{font-size:1.15rem;font-weight:600}
+  .badge-ver{font-size:.75rem;background:#2563eb;color:#fff;padding:2px 8px;border-radius:99px}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;padding:20px;max-width:1280px;margin:0 auto}
+  @media(max-width:760px){.grid{grid-template-columns:1fr}}
   .card{background:#1a1d27;border:1px solid #2d3148;border-radius:10px;padding:18px}
-  .card h2{font-size:.8rem;text-transform:uppercase;letter-spacing:.8px;color:#94a3b8;margin-bottom:14px}
+  .card h2{font-size:.78rem;text-transform:uppercase;letter-spacing:.8px;color:#94a3b8;margin-bottom:14px}
+  .card-wide{grid-column:1/-1}
   .stat{font-size:2rem;font-weight:700;color:#38bdf8}
-  .stat small{font-size:.9rem;color:#64748b;margin-left:4px}
+  .uptime{font-size:.75rem;color:#64748b}
   table{width:100%;border-collapse:collapse;font-size:.85rem}
   th{text-align:left;color:#64748b;font-weight:500;padding:6px 8px;border-bottom:1px solid #2d3148}
   td{padding:7px 8px;border-bottom:1px solid #1e2132}
@@ -158,11 +165,10 @@ function dashboardHtml() {
   .btn-yellow{background:#d97706;color:#fff}
   .btn-blue{background:#2563eb;color:#fff}
   .btn-green{background:#16a34a;color:#fff}
+  .btn-gray{background:#374151;color:#e2e8f0}
   .empty{color:#475569;font-size:.85rem;text-align:center;padding:20px 0}
   #log{background:#0a0c14;border-radius:8px;padding:12px;font-family:'Fira Mono','Courier New',monospace;font-size:.75rem;height:280px;overflow-y:auto;color:#94a3b8;white-space:pre-wrap;word-break:break-all}
-  .log-warn{color:#f59e0b}
-  .log-error{color:#ef4444}
-  .log-info{color:#94a3b8}
+  .log-warn{color:#f59e0b}.log-error{color:#ef4444}.log-info{color:#94a3b8}
   input,textarea{background:#0f1117;border:1px solid #2d3148;border-radius:6px;color:#e2e8f0;padding:8px 10px;font-size:.85rem;width:100%}
   textarea{resize:vertical;min-height:60px}
   .form-row{display:flex;gap:8px;margin-top:8px}
@@ -171,24 +177,24 @@ function dashboardHtml() {
   #toast.show{opacity:1}
   .badge{display:inline-block;padding:2px 7px;border-radius:99px;font-size:.7rem;font-weight:600}
   .badge-online{background:#16a34a22;color:#4ade80}
-  .badge-banned{background:#dc262622;color:#f87171}
-  .uptime{font-size:.75rem;color:#64748b}
-  .card-wide{grid-column:1/-1}
-  #bans-body tr.expired td{opacity:.4}
-  .logout{margin-left:auto;font-size:.8rem;color:#64748b;text-decoration:none}
-  .logout:hover{color:#e2e8f0}
+  .toggle{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+  .toggle-label{font-size:.85rem;color:#94a3b8}
+  .pill{padding:3px 10px;border-radius:99px;font-size:.75rem;font-weight:600}
+  .pill-on{background:#16a34a22;color:#4ade80}
+  .pill-off{background:#dc262622;color:#f87171}
+  a.logout{margin-left:auto;font-size:.8rem;color:#64748b;text-decoration:none}
+  a.logout:hover{color:#e2e8f0}
 </style>
 </head>
 <body>
 <header>
-  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
   <h1>WebCraft Admin</h1>
-  <span id="mc-version">...</span>
+  <span class="badge-ver" id="mc-version">...</span>
   <a class="logout" href="/admin/logout">Logout</a>
 </header>
 <div class="grid">
 
-  <!-- Stats -->
   <div class="card">
     <h2>Server Status</h2>
     <div style="display:flex;gap:32px;flex-wrap:wrap;margin-top:4px">
@@ -198,16 +204,12 @@ function dashboardHtml() {
     </div>
   </div>
 
-  <!-- Broadcast -->
   <div class="card">
     <h2>Broadcast</h2>
     <textarea id="bc-msg" placeholder="Message to all players..."></textarea>
-    <div class="form-row" style="margin-top:8px">
-      <button class="btn btn-blue" onclick="broadcast()">Send to all</button>
-    </div>
+    <div class="form-row"><button class="btn btn-blue" onclick="broadcast()">Send to all</button></div>
   </div>
 
-  <!-- Players -->
   <div class="card">
     <h2>Online Players</h2>
     <table>
@@ -216,7 +218,6 @@ function dashboardHtml() {
     </table>
   </div>
 
-  <!-- Bans -->
   <div class="card">
     <h2>Ban Manager</h2>
     <div class="form-row">
@@ -230,7 +231,24 @@ function dashboardHtml() {
     </table>
   </div>
 
-  <!-- Logs -->
+  <div class="card">
+    <h2>Whitelist</h2>
+    <div class="toggle">
+      <span class="toggle-label">Status:</span>
+      <span id="wl-status" class="pill pill-off">OFF</span>
+      <button class="btn btn-green" onclick="wlToggle(true)">Enable</button>
+      <button class="btn btn-gray" onclick="wlToggle(false)">Disable</button>
+    </div>
+    <div class="form-row">
+      <input id="wl-username" placeholder="Username to add">
+      <button class="btn btn-blue" onclick="wlAdd()">Add</button>
+    </div>
+    <table style="margin-top:12px">
+      <thead><tr><th>Player</th><th></th></tr></thead>
+      <tbody id="wl-body"><tr><td colspan="2" class="empty">Whitelist empty</td></tr></tbody>
+    </table>
+  </div>
+
   <div class="card card-wide">
     <h2>Live Logs <span style="font-size:.7rem;color:#64748b;text-transform:none;letter-spacing:0">last ${MAX_BUFFER} lines</span></h2>
     <div id="log"></div>
@@ -239,128 +257,47 @@ function dashboardHtml() {
 </div>
 <div id="toast"></div>
 <script>
-const TOKEN = document.cookie.replace(/(?:^|.*;)\\s*wc_session\\s*=\\s*([^;]*).*$|^.*$/,'$1');
-const H = { 'Content-Type':'application/json', 'Authorization': 'Bearer '+TOKEN };
-
+const H={'Content-Type':'application/json','Authorization':'Bearer '+document.cookie.replace(/(?:^|.*;)\\s*wc_session\\s*=\\s*([^;]*).*$|^.*$/,'$1')};
 function fmt(s){return s<60?s+'s':s<3600?Math.floor(s/60)+'m':Math.floor(s/3600)+'h '+Math.floor(s%3600/60)+'m';}
-
-function toast(msg,ok=true){
-  const t=document.getElementById('toast');
-  t.textContent=msg;
-  t.style.borderColor=ok?'#16a34a':'#dc2626';
-  t.classList.add('show');
-  setTimeout(()=>t.classList.remove('show'),2800);
-}
-
-async function api(method,url,body){
-  const r=await fetch(url,{method,headers:H,body:body?JSON.stringify(body):undefined});
-  return r.json();
-}
-
-async function refresh(){
-  const [status,players,bans]=await Promise.all([
-    api('GET','/admin/status'),
-    api('GET','/admin/players'),
-    api('GET','/admin/bans'),
-  ]);
-  document.getElementById('mc-version').textContent='v'+status.version;
-  document.getElementById('stat-players').textContent=status.players.length;
-  document.getElementById('stat-max').textContent=status.maxPlayers;
-  document.getElementById('stat-uptime').textContent=fmt(status.uptime);
-
-  const pb=document.getElementById('players-body');
-  if(!players.players.length){
-    pb.innerHTML='<tr><td colspan="4" class="empty">No players online</td></tr>';
-  } else {
-    pb.innerHTML=players.players.map(p=>`
-      <tr>
-        <td><span class="badge badge-online">online</span> ${esc(p.username)}</td>
-        <td>${p.ping||'-'}ms</td>
-        <td><code style="font-size:.7rem">${esc(p.ip||'-')}</code></td>
-        <td>
-          <button class="btn btn-yellow" onclick="kick('${esc(p.username)}')">Kick</button>
-          <button class="btn btn-red" style="margin-left:4px" onclick="quickBan('${esc(p.username)}')">Ban</button>
-        </td>
-      </tr>`).join('');
-  }
-
-  const bb=document.getElementById('bans-body');
-  const banEntries=Object.entries(bans.bans||{});
-  if(!banEntries.length){
-    bb.innerHTML='<tr><td colspan="4" class="empty">No active bans</td></tr>';
-  } else {
-    const now=Date.now();
-    bb.innerHTML=banEntries.map(([name,e])=>{
-      const expired=e.expiry&&now>e.expiry;
-      return `<tr class="${expired?'expired':''}"><td>${esc(name)}</td><td>${esc(e.reason)}</td><td>${esc(e.bannedBy||'-')}</td><td><button class="btn btn-green" onclick="unban('${esc(name)}')">Unban</button></td></tr>`;
-    }).join('');
-  }
-}
-
+function toast(msg,ok=true){const t=document.getElementById('toast');t.textContent=msg;t.style.borderColor=ok?'#16a34a':'#dc2626';t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2800);}
+async function api(m,u,b){const r=await fetch(u,{method:m,headers:H,body:b?JSON.stringify(b):undefined});return r.json();}
 function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 
-async function kick(u){
-  const reason=prompt('Kick reason:','Kicked by admin');
-  if(!reason)return;
-  const r=await api('POST','/admin/kick/'+encodeURIComponent(u),{reason});
-  toast(r.error||'Kicked '+u,!r.error);
-  refresh();
+async function refresh(){
+  const [st,pl,bans,wl]=await Promise.all([api('GET','/admin/status'),api('GET','/admin/players'),api('GET','/admin/bans'),api('GET','/admin/whitelist')]);
+  document.getElementById('mc-version').textContent='v'+st.version;
+  document.getElementById('stat-players').textContent=st.players.length;
+  document.getElementById('stat-max').textContent=st.maxPlayers;
+  document.getElementById('stat-uptime').textContent=fmt(st.uptime);
+  const pb=document.getElementById('players-body');
+  pb.innerHTML=pl.players.length?pl.players.map(p=>`<tr><td><span class="badge badge-online">online</span> ${esc(p.username)}</td><td>${p.ping||'-'}ms</td><td><code style="font-size:.7rem">${esc(p.ip||'-')}</code></td><td><button class="btn btn-yellow" onclick="kick('${esc(p.username)}')">Kick</button> <button class="btn btn-red" onclick="quickBan('${esc(p.username)}')">Ban</button></td></tr>`).join(''):'<tr><td colspan="4" class="empty">No players online</td></tr>';
+  const bb=document.getElementById('bans-body');
+  const be=Object.entries(bans.bans||{});
+  bb.innerHTML=be.length?be.map(([n,e])=>`<tr><td>${esc(n)}</td><td>${esc(e.reason)}</td><td>${esc(e.bannedBy||'-')}</td><td><button class="btn btn-green" onclick="unban('${esc(n)}')">Unban</button></td></tr>`).join(''):'<tr><td colspan="4" class="empty">No active bans</td></tr>';
+  const ws=document.getElementById('wl-status');
+  ws.textContent=wl.enabled?'ON':'OFF';
+  ws.className='pill '+(wl.enabled?'pill-on':'pill-off');
+  const wb=document.getElementById('wl-body');
+  wb.innerHTML=wl.players.length?wl.players.map(p=>`<tr><td>${esc(p)}</td><td><button class="btn btn-red" onclick="wlRemove('${esc(p)}')">Remove</button></td></tr>`).join(''):'<tr><td colspan="2" class="empty">Whitelist empty</td></tr>';
 }
+async function kick(u){const r=prompt('Kick reason:','Kicked by admin');if(!r)return;const d=await api('POST','/admin/kick/'+encodeURIComponent(u),{reason:r});toast(d.error||'Kicked '+u,!d.error);refresh();}
+async function quickBan(u){const r=prompt('Ban reason:','Banned by admin');if(!r)return;const d=await api('POST','/admin/ban/'+encodeURIComponent(u),{reason:r});toast(d.error||'Banned '+u,!d.error);refresh();}
+async function banPlayer(){const u=document.getElementById('ban-username').value.trim();const r=document.getElementById('ban-reason').value.trim()||'Banned by admin';if(!u)return toast('Enter a username',false);const d=await api('POST','/admin/ban/'+encodeURIComponent(u),{reason:r});toast(d.error||'Banned '+u,!d.error);document.getElementById('ban-username').value='';document.getElementById('ban-reason').value='';refresh();}
+async function unban(u){const d=await api('POST','/admin/unban/'+encodeURIComponent(u),{});toast(d.error||'Unbanned '+u,!d.error);refresh();}
+async function broadcast(){const m=document.getElementById('bc-msg').value.trim();if(!m)return;const d=await api('POST','/admin/broadcast',{message:m});toast(d.error||'Broadcast sent',!d.error);document.getElementById('bc-msg').value='';}
+async function wlToggle(on){await api('POST','/admin/whitelist/'+(on?'on':'off'),{});toast('Whitelist '+(on?'enabled':'disabled'));refresh();}
+async function wlAdd(){const u=document.getElementById('wl-username').value.trim();if(!u)return toast('Enter a username',false);const d=await api('POST','/admin/whitelist/add',{username:u});toast(d.error||'Added '+u,!d.error);document.getElementById('wl-username').value='';refresh();}
+async function wlRemove(u){const d=await api('POST','/admin/whitelist/remove',{username:u});toast(d.error||'Removed '+u,!d.error);refresh();}
 
-async function quickBan(u){
-  const reason=prompt('Ban reason:','Banned by admin');
-  if(!reason)return;
-  const r=await api('POST','/admin/ban/'+encodeURIComponent(u),{reason});
-  toast(r.error||'Banned '+u,!r.error);
-  refresh();
-}
-
-async function banPlayer(){
-  const u=document.getElementById('ban-username').value.trim();
-  const reason=document.getElementById('ban-reason').value.trim()||'Banned by admin';
-  if(!u)return toast('Enter a username',false);
-  const r=await api('POST','/admin/ban/'+encodeURIComponent(u),{reason});
-  toast(r.error||'Banned '+u,!r.error);
-  document.getElementById('ban-username').value='';
-  document.getElementById('ban-reason').value='';
-  refresh();
-}
-
-async function unban(u){
-  const r=await api('POST','/admin/unban/'+encodeURIComponent(u),{});
-  toast(r.error||'Unbanned '+u,!r.error);
-  refresh();
-}
-
-async function broadcast(){
-  const msg=document.getElementById('bc-msg').value.trim();
-  if(!msg)return;
-  const r=await api('POST','/admin/broadcast',{message:msg});
-  toast(r.error||'Broadcast sent',!r.error);
-  document.getElementById('bc-msg').value='';
-}
-
-// SSE log stream
 const logEl=document.getElementById('log');
-const evtSource=new EventSource('/admin/logs');
-evtSource.onmessage=e=>{
-  const line=JSON.parse(e.data);
-  const div=document.createElement('div');
-  div.className=line.includes('WARN')?'log-warn':line.includes('ERROR')?'log-error':'log-info';
-  div.textContent=line;
-  logEl.appendChild(div);
-  if(logEl.children.length>200)logEl.removeChild(logEl.firstChild);
-  logEl.scrollTop=logEl.scrollHeight;
-};
+const es=new EventSource('/admin/logs');
+es.onmessage=e=>{const line=JSON.parse(e.data);const div=document.createElement('div');div.className=line.includes('WARN')?'log-warn':line.includes('ERROR')?'log-error':'log-info';div.textContent=line;logEl.appendChild(div);if(logEl.children.length>200)logEl.removeChild(logEl.firstChild);logEl.scrollTop=logEl.scrollHeight;};
 
-refresh();
-setInterval(refresh,5000);
+refresh();setInterval(refresh,5000);
 </script>
-</body>
-</html>`;
+</body></html>`;
 }
 
-// ---- Login page ------------------------------------------------------------
 function loginHtml(error) {
   return `<!DOCTYPE html>
 <html lang="en">
@@ -383,15 +320,19 @@ function loginHtml(error) {
 <body>
 <div class="box">
   <h1>WebCraft Admin</h1>
-  ${error ? '<div class="error">Invalid password</div>' : ''}
+  ${error ? '<div class="error">Invalid token</div>' : ''}
   <form method="POST" action="/admin/login">
     <label>Admin Token</label>
     <input type="password" name="token" placeholder="Enter admin token" autofocus required>
     <button type="submit">Sign in</button>
   </form>
 </div>
-</body>
-</html>`;
+</body></html>`;
+}
+
+// ---- Whitelist helpers (reads server.webcraft.whitelist if plugin active) ---
+function getWhitelistApi(mcServer) {
+  return mcServer?.webcraft?.whitelist ?? null;
 }
 
 // ---- Server ----------------------------------------------------------------
@@ -401,28 +342,23 @@ function startAdminServer(mcServer) {
       const url    = req.url.split('?')[0];
       const method = req.method;
 
-      // Login form
+      // Login
       if (method === 'GET' && url === '/admin/login') {
         res.writeHead(200, { 'Content-Type': 'text/html' });
         return res.end(loginHtml(false));
       }
-
       if (method === 'POST' && url === '/admin/login') {
         const form = await readForm(req);
         if (!config.ADMIN_TOKEN || form.token === config.ADMIN_TOKEN) {
           const sid = randomToken();
           SESSIONS.add(sid);
-          setTimeout(() => SESSIONS.delete(sid), 8 * 3600 * 1000); // 8h session
-          res.writeHead(302, {
-            'Set-Cookie': `wc_session=${sid}; HttpOnly; Path=/; SameSite=Strict`,
-            Location:     '/',
-          });
+          setTimeout(() => SESSIONS.delete(sid), 8 * 3600 * 1000);
+          res.writeHead(302, { 'Set-Cookie': `wc_session=${sid}; HttpOnly; Path=/; SameSite=Strict`, Location: '/' });
           return res.end();
         }
         res.writeHead(200, { 'Content-Type': 'text/html' });
         return res.end(loginHtml(true));
       }
-
       if (url === '/admin/logout') {
         const cookies = parseCookies(req);
         SESSIONS.delete(cookies.wc_session);
@@ -430,107 +366,109 @@ function startAdminServer(mcServer) {
         return res.end();
       }
 
-      // All other routes require auth
+      // Auth guard
       if (!isAuthenticated(req)) {
-        const isApiCall = req.headers['authorization'] || req.headers['content-type'] === 'application/json';
-        if (isApiCall) {
-          res.writeHead(401, { 'Content-Type': 'application/json' });
-          return res.end(JSON.stringify({ error: 'Unauthorized' }));
-        }
-        res.writeHead(302, { Location: '/admin/login' });
-        return res.end();
+        const isApi = req.headers['authorization'] || req.headers['content-type'] === 'application/json';
+        if (isApi) { res.writeHead(401, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'Unauthorized' })); }
+        res.writeHead(302, { Location: '/admin/login' }); return res.end();
       }
 
       // Dashboard
       if (method === 'GET' && (url === '/' || url === '/admin')) {
-        res.writeHead(200, { 'Content-Type': 'text/html' });
-        return res.end(dashboardHtml());
+        res.writeHead(200, { 'Content-Type': 'text/html' }); return res.end(dashboardHtml());
       }
 
-      // SSE log stream
+      // SSE logs
       if (method === 'GET' && url === '/admin/logs') {
-        res.writeHead(200, {
-          'Content-Type':  'text/event-stream',
-          'Cache-Control': 'no-cache',
-          Connection:      'keep-alive',
-        });
-        // Flush buffered lines
+        res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
         for (const line of logBuffer) res.write(`data: ${JSON.stringify(line)}\n\n`);
         sseClients.add(res);
         req.on('close', () => sseClients.delete(res));
         return;
       }
 
-      // GET /admin/status
+      // Status
       if (method === 'GET' && url === '/admin/status') {
-        const players = Object.values(mcServer.players || {}).map((p) => p.username);
-        return json(res, 200, {
-          uptime:     Math.floor(process.uptime()),
-          players,
-          maxPlayers: config.MAX_PLAYERS,
-          version:    config.MC_VERSION,
-          onlineMode: config.ONLINE_MODE,
-        });
+        return json(res, 200, { uptime: Math.floor(process.uptime()), players: Object.values(mcServer.players || {}).map((p) => p.username), maxPlayers: config.MAX_PLAYERS, version: config.MC_VERSION, onlineMode: config.ONLINE_MODE });
       }
 
-      // GET /admin/players
+      // Players
       if (method === 'GET' && url === '/admin/players') {
-        const players = Object.values(mcServer.players || {}).map((p) => ({
-          username: p.username,
-          ping:     p.ping,
-          ip:       p.socket?.remoteAddress,
-        }));
-        return json(res, 200, { players });
+        return json(res, 200, { players: Object.values(mcServer.players || {}).map((p) => ({ username: p.username, ping: p.ping, ip: p.socket?.remoteAddress })) });
       }
 
-      // GET /admin/bans
-      if (method === 'GET' && url === '/admin/bans') {
-        return json(res, 200, { bans: getBans() });
-      }
+      // Bans
+      if (method === 'GET' && url === '/admin/bans') return json(res, 200, { bans: getBans() });
 
-      // POST /admin/kick/:username
-      const kickMatch = url.match(/^\/admin\/kick\/(.+)$/);
+      const kickMatch  = url.match(/^\/admin\/kick\/(.+)$/);
+      const banMatch   = url.match(/^\/admin\/ban\/(.+)$/);
+      const unbanMatch = url.match(/^\/admin\/unban\/(.+)$/);
+
       if (method === 'POST' && kickMatch) {
         const username = decodeURIComponent(kickMatch[1]);
         const body     = await readBody(req);
         const reason   = body.reason || 'Kicked by admin';
         const player   = Object.values(mcServer.players || {}).find((p) => p.username === username);
         if (!player) return json(res, 404, { error: `Player "${username}" not found` });
-        player.kick(reason);
-        log.info(`Kicked ${username}: ${reason}`);
+        player.kick(reason); log.info(`Kicked ${username}: ${reason}`);
         return json(res, 200, { kicked: username, reason });
       }
 
-      // POST /admin/ban/:username
-      const banMatch = url.match(/^\/admin\/ban\/(.+)$/);
       if (method === 'POST' && banMatch) {
         const username = decodeURIComponent(banMatch[1]);
         const body     = await readBody(req);
         const reason   = body.reason || 'Banned via admin dashboard';
         writeBan(username, reason, null, 'admin-dashboard');
         const player = Object.values(mcServer.players || {}).find((p) => p.username.toLowerCase() === username.toLowerCase());
-        if (player) player.kick(`You have been banned: ${reason}`);
+        if (player) player.kick(`Banned: ${reason}`);
         log.info(`Banned ${username}: ${reason}`);
         return json(res, 200, { banned: username, reason });
       }
 
-      // POST /admin/unban/:username
-      const unbanMatch = url.match(/^\/admin\/unban\/(.+)$/);
       if (method === 'POST' && unbanMatch) {
         const username = decodeURIComponent(unbanMatch[1]);
-        removeBan(username);
-        log.info(`Unbanned ${username}`);
+        removeBan(username); log.info(`Unbanned ${username}`);
         return json(res, 200, { unbanned: username });
       }
 
-      // POST /admin/broadcast
       if (method === 'POST' && url === '/admin/broadcast') {
-        const body    = await readBody(req);
-        const message = body.message;
-        if (!message) return json(res, 400, { error: '"message" field required' });
-        mcServer.broadcast(message);
-        log.info(`Broadcast: ${message}`);
-        return json(res, 200, { broadcast: message });
+        const body = await readBody(req);
+        if (!body.message) return json(res, 400, { error: '"message" field required' });
+        mcServer.broadcast(body.message); log.info(`Broadcast: ${body.message}`);
+        return json(res, 200, { broadcast: body.message });
+      }
+
+      // Whitelist
+      if (method === 'GET' && url === '/admin/whitelist') {
+        const wl = getWhitelistApi(mcServer);
+        if (!wl) return json(res, 200, { enabled: false, players: [], note: 'whitelist plugin not loaded' });
+        return json(res, 200, { enabled: wl.isEnabled(), players: wl.getList() });
+      }
+      if (method === 'POST' && url === '/admin/whitelist/on') {
+        const wl = getWhitelistApi(mcServer);
+        if (wl) wl.setEnabled(true); log.info('Whitelist enabled via dashboard');
+        return json(res, 200, { enabled: true });
+      }
+      if (method === 'POST' && url === '/admin/whitelist/off') {
+        const wl = getWhitelistApi(mcServer);
+        if (wl) wl.setEnabled(false); log.info('Whitelist disabled via dashboard');
+        return json(res, 200, { enabled: false });
+      }
+      if (method === 'POST' && url === '/admin/whitelist/add') {
+        const wl   = getWhitelistApi(mcServer);
+        const body = await readBody(req);
+        if (!body.username) return json(res, 400, { error: '"username" required' });
+        if (wl) wl.add(body.username);
+        log.info(`Whitelist add: ${body.username}`);
+        return json(res, 200, { added: body.username });
+      }
+      if (method === 'POST' && url === '/admin/whitelist/remove') {
+        const wl   = getWhitelistApi(mcServer);
+        const body = await readBody(req);
+        if (!body.username) return json(res, 400, { error: '"username" required' });
+        if (wl) wl.remove(body.username);
+        log.info(`Whitelist remove: ${body.username}`);
+        return json(res, 200, { removed: body.username });
       }
 
       json(res, 404, { error: 'Not found' });

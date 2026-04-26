@@ -8,29 +8,24 @@ This project follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
-- Web admin dashboard served at `http://127.0.0.1:ADMIN_PORT/`
-  - Login page with session cookie (8h session)
-  - Server status: player count, max slots, uptime
-  - Online player table: kick and quick-ban buttons
-  - Ban manager: add ban, list bans, unban
-  - Broadcast form
-  - Live log stream via SSE (last 200 lines buffered)
-- Admin API new endpoints: `GET /admin/bans`, `POST /admin/ban/:username`, `POST /admin/unban/:username`
-- Session-based auth for the dashboard (form login) alongside existing Bearer token support
-
-### Fixed
-- Plugin load order: numeric prefix sort + automatic skip of `core-api.js`
-- `world-persistence.js`: defensive chunk serialisation
-- `chat-formatter.js`: double-dispatch resolved via `setImmediate`
-- `admin.js`: blocks requests when `ONLINE_MODE=true` and no `ADMIN_TOKEN` set
-- `ws-bridge.js` and `index.js`: removed emoji from log lines
+- `plugins/whitelist.js`: runtime whitelist with on/off toggle, add/remove/list/reload commands
+- `src/world-persistence.js`: Anvil (.mca) format world saves
+  - One region file per 32x32 chunk area
+  - Tries `toAnvil()`, then `toNbt()`, then JSON fallback per chunk
+  - `level.json` metadata snapshot on each save
+  - Compatible with MCEdit, Chunker, Amulet
+- Admin dashboard: Whitelist panel (enable/disable, add/remove players)
+- Admin API: `GET /admin/whitelist`, `POST /admin/whitelist/on|off|add|remove`
+- `plugins/README.md`: whitelist commands, Anvil world layout, updated permission table
 
 ### Added (previous)
-- `plugins/anti-spam.js`, `SECURITY.md`, `CHANGELOG.md`
-- `Dockerfile` + `docker-compose.yml`
-- Unit tests for `config`, `logger`, `plugins`, `ban-manager`
-- Jest config inline, `test:watch`, `test:coverage`, `lint` scripts
-- CI: syntax check + coverage artifact upload
+- Web admin dashboard with login, SSE logs, player table, ban manager, broadcast
+- `plugins/anti-spam.js`, `SECURITY.md`, `Dockerfile`, `docker-compose.yml`
+- Unit tests for config, logger, plugins, ban-manager
+- Jest config, lint script, CI coverage upload
+
+### Fixed
+- Plugin load order, world-save crash, chat double-dispatch, admin auth hardening
 
 ---
 
@@ -39,9 +34,5 @@ This project follows [Semantic Versioning](https://semver.org/).
 ### Added
 - Initial WebCraft architecture: flying-squid + WebSocket bridge
 - Centralised config, structured logger, plugin loader
-- WS/WSS bridge + healthcheck + rate limiting
-- Graceful shutdown on SIGTERM/SIGINT
-- TLS/WSS support via `CERT_PATH` + `KEY_PATH`
-- Full plugin pack: LuckPerms Lite, EssentialsX Lite, Ban Manager, Gamemode,
-  Vanish, Nick, Staff Chat, Sudo, Chat Formatter, InvSee
-- One-line installer, local TCP->WS proxy, GitHub Actions CI
+- WS/WSS bridge, healthcheck, rate limiting, graceful shutdown
+- TLS/WSS support, full plugin pack, one-line installer, CI
