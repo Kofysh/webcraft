@@ -1,0 +1,13 @@
+{
+  "name": "webcraft-proxy",
+  "version": "0.1.0",
+  "description": "Local TCP-to-WebSocket proxy — lets the official Minecraft client connect to a WebCraft server",
+  "main": "index.js",
+  "bin": {
+    "webcraft-proxy": "./index.js"
+  },
+  "scripts": { "start": "node index.js" },
+  "license": "MIT",
+  "dependencies": { "ws": "^8.17.0" },
+  "engines": { "node": ">=18.0.0" }
+}
