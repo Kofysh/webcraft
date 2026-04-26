@@ -32,7 +32,7 @@ async function main() {
   log.info(`Healthcheck       -> GET http://localhost:${config.WS_PORT}/`);
 
   await startAdminServer(mcServer);
-  log.info(`Admin API         -> http://127.0.0.1:${config.ADMIN_PORT}/admin/status`);
+  log.info(`Admin dashboard   -> http://127.0.0.1:${config.ADMIN_PORT}/`);
 
   startAutosave(mcServer);
 
