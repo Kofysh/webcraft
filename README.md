@@ -11,10 +11,10 @@ WebCraft wraps the server behind a **WebSocket bridge** so it can run anywhere N
 Player's PC                        Any Node.js host
 ────────────────────────────     ─────────────────────────────────
 Minecraft Client                   ┌────────────────────────────┐
-   └─► TCP :25565 (local)          │  WebCraft                    │
-         │                         │                              │
-webcraft-proxy    ──── WSS ────────►│  WS Bridge  →  flying-squid │
-(run once on PC)                   │  :8080      →  :25565 (lo)  │
+   └─► TCP :25565 (local)          │  WebCraft                  │
+         │                         │                            │
+webcraft-proxy    ──── WSS ────────►│  WS Bridge → flying-squid  │
+(run once on PC)                   │  :8080     → :25565 (lo)   │
                                    └────────────────────────────┘
 ```
 
@@ -32,25 +32,57 @@ Or manually:
 git clone https://github.com/Kofysh/webcraft.git
 cd webcraft
 npm install
-cp .env.example .env   # then edit .env
+cp .env.example .env
 node src/index.js
 ```
 
 ---
 
+## Plugin pack included
+
+WebCraft now ships with a lightweight plugin pack inspired by **EssentialsX** and **LuckPerms**.
+
+### EssentialsX Lite
+
+- `/spawn`
+- `/sethome`, `/home`
+- `/msg`, `/r`
+- `/broadcast`
+- `/kick`
+- `/heal`, `/feed`
+- `/fly`
+- `/tp`, `/tphere`
+- `/setwarp`, `/warp`, `/warps`
+- `/mute`, `/unmute`
+- `/help`
+
+### LuckPerms Lite
+
+- Groups: `admin`, `moderator`, `default`
+- `/lp user <name> parent set <group>`
+- `/lp group <group> permission set <perm>`
+- `/whoami`
+- Wildcards supported: `*`, `essentials.*`, etc.
+
+Plugin docs live in [`plugins/README.md`](plugins/README.md).
+
+---
+
 ## Players connect
 
-Each player runs **once** on their own machine:
+Each player runs once on their own machine:
+
 ```bash
 npx webcraft-proxy wss://your-host.example.com:8080
 ```
+
 Then adds `127.0.0.1` as a server in Minecraft.
 
 ---
 
 ## Configuration
 
-All settings live in `.env` (see `.env.example`):
+All settings live in `.env` (see `.env.example`).
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -61,95 +93,30 @@ All settings live in `.env` (see `.env.example`):
 | `MC_VERSION` | `1.20.4` | Minecraft version |
 | `ONLINE_MODE` | `true` | Require Mojang auth |
 | `MAX_PLAYERS` | `20` | Slot limit |
-| `VIEW_DISTANCE` | `8` | Render distance (chunks) |
+| `VIEW_DISTANCE` | `8` | Render distance |
 | `MOTD` | see `.env.example` | Server list message |
-| `RATE_LIMIT_MAX` | `10` | Max WS connections per IP per minute |
+| `RATE_LIMIT_MAX` | `10` | Max WS connections/IP/min |
 | `ADMIN_PORT` | `9090` | Internal admin API port |
 | `ADMIN_TOKEN` | — | Bearer token for admin API |
 | `WORLD_DIR` | `./world` | World save directory |
-| `AUTOSAVE_MIN` | `5` | Auto-save interval (minutes) |
+| `AUTOSAVE_MIN` | `5` | Auto-save interval |
 | `PLUGINS_DIR` | `./plugins` | Plugins directory |
-| `LOG_LEVEL` | `INFO` | Log level (DEBUG/INFO/WARN/ERROR) |
-
----
-
-## Plugins
-
-Place any `.js` file in the `plugins/` directory. Each plugin exports a single function:
-
-```js
-module.exports = function(server, config) {
-  server.on('login', (client) => {
-    client.write('chat', { message: JSON.stringify({ text: 'Hello!' }), position: 1 });
-  });
-};
-```
-
-Two example plugins are included: `plugins/hello.js` and `plugins/motd-rotator.js`.
+| `LOG_LEVEL` | `INFO` | Log verbosity |
 
 ---
 
 ## Admin API
 
-Listens on `127.0.0.1:ADMIN_PORT` (never exposed publicly).
+Listens on `127.0.0.1:ADMIN_PORT` only.
 
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/admin/status` | Server status + player list |
-| GET | `/admin/players` | Online players with ping + IP |
-| POST | `/admin/kick/:username` | Kick a player (`{ "reason": "..." }`) |
-| POST | `/admin/broadcast` | Broadcast a message (`{ "message": "..." }`) |
-
-Secure with `ADMIN_TOKEN` env var — requests need `Authorization: Bearer <token>`.
+| GET | `/admin/players` | Online players |
+| POST | `/admin/kick/:username` | Kick a player |
+| POST | `/admin/broadcast` | Broadcast a message |
 
 ---
-
-## TLS / WSS
-
-Set `CERT_PATH` and `KEY_PATH` in `.env` to enable WSS (encrypted WebSocket):
-
-```bash
-# Free cert with certbot
-certbot certonly --standalone -d your-domain.com
-```
-
-Then in `.env`:
-```
-CERT_PATH=/etc/letsencrypt/live/your-domain.com/fullchain.pem
-KEY_PATH=/etc/letsencrypt/live/your-domain.com/privkey.pem
-```
-
----
-
-## Project structure
-
-```
-webcraft/
-├── src/
-│   ├── index.js              Entry point + graceful shutdown
-│   ├── config.js             Centralised config + validation
-│   ├── logger.js             Structured logger (timestamps + levels)
-│   ├── minecraft-server.js   flying-squid wrapper (loopback only)
-│   ├── ws-bridge.js          WebSocket ↔ TCP bridge + healthcheck
-│   ├── admin.js              Internal HTTP admin API
-│   ├── plugins.js            Plugin loader
-│   └── world-persistence.js  Auto-save world to disk
-├── proxy/
-│   └── index.js              webcraft-proxy (run by players)
-├── plugins/
-│   ├── hello.js              Example: welcome message
-│   └── motd-rotator.js       Example: rotating MOTD
-├── scripts/
-│   └── install.sh            One-line installer
-├── .env.example
-└── README.md
-```
-
----
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
