@@ -1,83 +1,83 @@
 /**
  * ws-bridge.js
- * Public WebSocket server — the ONLY port exposed to the internet.
+ * Public WebSocket/WSS server — the ONLY port exposed to the internet.
  *
  * Features:
- *  - Raw bidirectional TCP pipe per WebSocket connection
+ *  - TLS (WSS) when CERT_PATH + KEY_PATH env vars are set, plain WS otherwise
  *  - Per-IP rate limiting (RATE_LIMIT_MAX connections per minute)
  *  - Active connection counter
- *  - HTTP GET / healthcheck → 200 + JSON stats for hosting platform liveness probes
+ *  - HTTP GET / healthcheck → JSON stats for liveness probes
  */
+
+'use strict';
 
 const WebSocket = require('ws');
 const net       = require('net');
 const http      = require('http');
+const https     = require('https');
+const fs        = require('fs');
+const log       = require('./logger')('WS');
+const config    = require('./config');
 
-const RATE_LIMIT_MAX = parseInt(process.env.RATE_LIMIT_MAX) || 10;
 const RATE_WINDOW_MS = 60_000;
-
-// ip => { count: number, resetAt: number }
-const rateLimitMap = new Map();
-
+const rateLimitMap   = new Map();
 let activeConnections = 0;
 let _wss = null;
+let _httpServer = null;
 
-/**
- * Check if an IP has exceeded the connection rate limit.
- * @param {string} ip
- * @returns {boolean} true if allowed, false if blocked
- */
 function checkRateLimit(ip) {
   const now = Date.now();
   let entry = rateLimitMap.get(ip);
-
   if (!entry || now > entry.resetAt) {
-    entry = { count: 1, resetAt: now + RATE_WINDOW_MS };
-    rateLimitMap.set(ip, entry);
+    rateLimitMap.set(ip, { count: 1, resetAt: now + RATE_WINDOW_MS });
     return true;
   }
-
   entry.count += 1;
-  return entry.count <= RATE_LIMIT_MAX;
+  return entry.count <= config.RATE_LIMIT_MAX;
 }
 
-// Clean up stale rate limit entries every minute to avoid memory leaks
 setInterval(() => {
   const now = Date.now();
-  for (const [ip, entry] of rateLimitMap) {
-    if (now > entry.resetAt) rateLimitMap.delete(ip);
-  }
+  for (const [ip, e] of rateLimitMap)
+    if (now > e.resetAt) rateLimitMap.delete(ip);
 }, RATE_WINDOW_MS).unref();
 
 /**
- * @param {object} opts
- * @param {number} opts.wsPort   Public WebSocket port
- * @param {string} opts.mcHost   Internal Minecraft host
- * @param {number} opts.mcPort   Internal Minecraft TCP port
- * @returns {Promise<{ wss: WebSocket.Server, httpServer: http.Server }>}
+ * @returns {http.Server|https.Server}
  */
-function startWsBridge({ wsPort = 8080, mcHost = '127.0.0.1', mcPort = 25565 } = {}) {
+function createHttpServer() {
+  const healthHandler = (req, res) => {
+    if (req.method === 'GET' && req.url === '/') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        status: 'ok',
+        activeConnections,
+        uptime: Math.floor(process.uptime()),
+        version: config.MC_VERSION,
+        tls: !!(config.CERT_PATH && config.KEY_PATH),
+      }));
+    } else {
+      res.writeHead(404); res.end();
+    }
+  };
+
+  if (config.CERT_PATH && config.KEY_PATH) {
+    log.info('TLS enabled — loading cert and key');
+    return https.createServer({
+      cert: fs.readFileSync(config.CERT_PATH),
+      key:  fs.readFileSync(config.KEY_PATH),
+    }, healthHandler);
+  }
+
+  log.warn('TLS not configured — running plain WS (set CERT_PATH + KEY_PATH for WSS)');
+  return http.createServer(healthHandler);
+}
+
+function startWsBridge({ wsPort = config.WS_PORT, mcHost = '127.0.0.1', mcPort = config.MC_PORT } = {}) {
   return new Promise((resolve, reject) => {
-
-    // HTTP server handles both the healthcheck and WS upgrade
-    const httpServer = http.createServer((req, res) => {
-      if (req.method === 'GET' && req.url === '/') {
-        const body = JSON.stringify({
-          status: 'ok',
-          activeConnections,
-          uptime: Math.floor(process.uptime()),
-          version: process.env.MC_VERSION || '1.20.4',
-        });
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(body);
-      } else {
-        res.writeHead(404);
-        res.end();
-      }
-    });
-
-    const wss = new WebSocket.Server({ server: httpServer });
-    _wss = wss;
+    _httpServer = createHttpServer();
+    const wss   = new WebSocket.Server({ server: _httpServer });
+    _wss        = wss;
 
     wss.on('error', reject);
 
@@ -85,25 +85,22 @@ function startWsBridge({ wsPort = 8080, mcHost = '127.0.0.1', mcPort = 25565 } =
       const ip = req.socket.remoteAddress || 'unknown';
 
       if (!checkRateLimit(ip)) {
-        console.warn(`[WS] 🚫 Rate limited: ${ip}`);
+        log.warn(`Rate limited: ${ip}`);
         ws.close(1008, 'Rate limit exceeded');
         return;
       }
 
-      activeConnections += 1;
-      console.log(`[WS] 🔌 ${ip} connected (active: ${activeConnections})`);
+      activeConnections++;
+      log.info(`🔌 ${ip} connected (active: ${activeConnections})`);
 
       const tcp = net.createConnection({ host: mcHost, port: mcPort });
 
-      // WebSocket → TCP
-      ws.on('message', (data) => { if (tcp.writable) tcp.write(data); });
-
-      // TCP → WebSocket
-      tcp.on('data', (chunk) => { if (ws.readyState === WebSocket.OPEN) ws.send(chunk); });
+      ws.on('message',  (data)  => { if (tcp.writable) tcp.write(data); });
+      tcp.on('data',    (chunk) => { if (ws.readyState === WebSocket.OPEN) ws.send(chunk); });
 
       const cleanup = (reason) => {
         activeConnections = Math.max(0, activeConnections - 1);
-        console.log(`[WS] 🔌 ${ip} disconnected — ${reason} (active: ${activeConnections})`);
+        log.info(`🔌 ${ip} disconnected — ${reason} (active: ${activeConnections})`);
         if (tcp.writable)                        tcp.destroy();
         if (ws.readyState !== WebSocket.CLOSED)  ws.close();
       };
@@ -114,23 +111,23 @@ function startWsBridge({ wsPort = 8080, mcHost = '127.0.0.1', mcPort = 25565 } =
       tcp.on('error', (e) => cleanup(`TCP error: ${e.message}`));
     });
 
-    httpServer.on('error', reject);
-    httpServer.listen(wsPort, () => {
-      console.log(`[WS] Bridge + healthcheck on :${wsPort}`);
-      resolve({ wss, httpServer });
+    _httpServer.on('error', reject);
+    _httpServer.listen(wsPort, () => {
+      const proto = config.CERT_PATH ? 'WSS/HTTPS' : 'WS/HTTP';
+      log.info(`Bridge (${proto}) listening on :${wsPort}`);
+      resolve({ wss, httpServer: _httpServer });
     });
   });
 }
 
-/**
- * Gracefully close all WebSocket connections and the HTTP server.
- * @returns {Promise<void>}
- */
 function stopWsBridge() {
   return new Promise((resolve) => {
     if (!_wss) return resolve();
     _wss.clients.forEach((ws) => ws.close(1001, 'Server shutting down'));
-    _wss.close(() => resolve());
+    _wss.close(() => {
+      if (_httpServer) _httpServer.close(() => resolve());
+      else resolve();
+    });
   });
 }
 

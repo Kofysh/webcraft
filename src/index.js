@@ -1,61 +1,67 @@
 /**
  * WebCraft — Entry point
- * Starts the internal Minecraft server + the public WebSocket bridge.
- * Handles graceful shutdown on SIGTERM / SIGINT.
+ * Boots all subsystems in order and handles graceful shutdown.
  */
 
-const { startMinecraftServer, stopMinecraftServer } = require('./minecraft-server');
-const { startWsBridge, stopWsBridge }               = require('./ws-bridge');
+'use strict';
 
-// Load .env file if present (development only — not needed in production)
 try { require('dotenv').config(); } catch (_) {}
 
-const MC_PORT     = parseInt(process.env.MC_PORT)  || 25565;
-const WS_PORT     = parseInt(process.env.WS_PORT)  || 8080;
-const MC_VERSION  = process.env.MC_VERSION         || '1.20.4';
-const ONLINE_MODE = process.env.ONLINE_MODE        !== 'false';
+const config   = require('./config');
+const log      = require('./logger')('Main');
+const { startMinecraftServer, stopMinecraftServer } = require('./minecraft-server');
+const { startWsBridge, stopWsBridge }               = require('./ws-bridge');
+const { startAdminServer, stopAdminServer }          = require('./admin');
+const { startAutosave, stopAutosave }               = require('./world-persistence');
+const { loadPlugins }                               = require('./plugins');
 
 async function main() {
-  console.log('');
-  console.log('🧱  WebCraft — Minecraft server over WebSocket');
-  console.log(`    Minecraft version : ${MC_VERSION}`);
-  console.log(`    Online mode       : ${ONLINE_MODE}`);
-  console.log('');
+  log.info('🧱 WebCraft starting up...');
+  log.info(`   Minecraft ${config.MC_VERSION}  |  Online mode: ${config.ONLINE_MODE}  |  Max players: ${config.MAX_PLAYERS}`);
 
-  await startMinecraftServer({ port: MC_PORT, version: MC_VERSION, onlineMode: ONLINE_MODE });
-  console.log(`✅  Minecraft server  → internal TCP 127.0.0.1:${MC_PORT}`);
+  // 1. Start internal Minecraft server
+  const mcServer = await startMinecraftServer({
+    port:       config.MC_PORT,
+    version:    config.MC_VERSION,
+    onlineMode: config.ONLINE_MODE,
+  });
+  log.info(`✅ Minecraft server  → 127.0.0.1:${config.MC_PORT}`);
 
-  await startWsBridge({ wsPort: WS_PORT, mcHost: '127.0.0.1', mcPort: MC_PORT });
-  console.log(`✅  WebSocket bridge  → public WS/HTTP :${WS_PORT}`);
-  console.log(`🩺  Healthcheck       → GET http://localhost:${WS_PORT}/`);
-  console.log('');
-  console.log(`📡  Players: npx webcraft-proxy wss://<your-domain>:${WS_PORT}`);
-  console.log('');
+  // 2. Start public WebSocket bridge (+ healthcheck endpoint)
+  await startWsBridge({ wsPort: config.WS_PORT, mcHost: '127.0.0.1', mcPort: config.MC_PORT });
+  const proto = config.CERT_PATH ? 'wss' : 'ws';
+  log.info(`✅ WS bridge         → ${proto}://0.0.0.0:${config.WS_PORT}`);
+  log.info(`🩺 Healthcheck       → GET http://localhost:${config.WS_PORT}/`);
+
+  // 3. Start internal admin API
+  await startAdminServer(mcServer);
+  log.info(`✅ Admin API         → http://127.0.0.1:${config.ADMIN_PORT}/admin/status`);
+
+  // 4. World auto-save
+  startAutosave(mcServer);
+
+  // 5. Load plugins
+  const plugins = loadPlugins(mcServer);
+  if (plugins.length) log.info(`🧩 Plugins loaded: ${plugins.join(', ')}`);
+
+  log.info('');
+  log.info(`📡 Players: npx webcraft-proxy ${proto}://<your-host>:${config.WS_PORT}`);
+  log.info('');
 }
 
-// ── Graceful shutdown ────────────────────────────────────────────────────────
 async function shutdown(signal) {
-  console.log(`\n[WebCraft] Received ${signal} — shutting down gracefully…`);
+  log.warn(`Received ${signal} — shutting down gracefully...`);
+  stopAutosave();
   await stopWsBridge();
+  await stopAdminServer();
   await stopMinecraftServer();
-  console.log('[WebCraft] Goodbye 👋');
+  log.info('Goodbye 👋');
   process.exit(0);
 }
 
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT',  () => shutdown('SIGINT'));
+process.on('uncaughtException',  (e) => { log.error('Uncaught exception:', e);  shutdown('uncaughtException'); });
+process.on('unhandledRejection', (r) => { log.error('Unhandled rejection:', r); shutdown('unhandledRejection'); });
 
-process.on('uncaughtException', (err) => {
-  console.error('[WebCraft] Uncaught exception:', err);
-  shutdown('uncaughtException');
-});
-
-process.on('unhandledRejection', (reason) => {
-  console.error('[WebCraft] Unhandled rejection:', reason);
-  shutdown('unhandledRejection');
-});
-
-main().catch((err) => {
-  console.error('[WebCraft] Fatal startup error:', err);
-  process.exit(1);
-});
+main().catch((err) => { log.error('Fatal startup error:', err); process.exit(1); });
