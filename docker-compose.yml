@@ -1,0 +1,23 @@
+version: '3.9'
+
+services:
+  webcraft:
+    build: .
+    container_name: webcraft
+    restart: unless-stopped
+    ports:
+      - "${WS_PORT:-8080}:8080"
+    volumes:
+      - ./world:/app/world
+      - ./data:/app/data
+      - ./.env:/app/.env:ro
+      # Optional TLS certs:
+      # - /etc/letsencrypt:/etc/letsencrypt:ro
+    environment:
+      - NODE_ENV=production
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:8080/', (r) => process.exit(r.statusCode === 200 ? 0 : 1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s

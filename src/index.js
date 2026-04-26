@@ -1,5 +1,5 @@
 /**
- * WebCraft — Entry point
+ * WebCraft - Entry point
  * Boots all subsystems in order and handles graceful shutdown.
  */
 
@@ -16,46 +16,39 @@ const { startAutosave, stopAutosave }               = require('./world-persisten
 const { loadPlugins }                               = require('./plugins');
 
 async function main() {
-  log.info('🧱 WebCraft starting up...');
-  log.info(`   Minecraft ${config.MC_VERSION}  |  Online mode: ${config.ONLINE_MODE}  |  Max players: ${config.MAX_PLAYERS}`);
+  log.info('WebCraft starting up...');
+  log.info(`Minecraft ${config.MC_VERSION} | Online mode: ${config.ONLINE_MODE} | Max players: ${config.MAX_PLAYERS}`);
 
-  // 1. Start internal Minecraft server
   const mcServer = await startMinecraftServer({
     port:       config.MC_PORT,
     version:    config.MC_VERSION,
     onlineMode: config.ONLINE_MODE,
   });
-  log.info(`✅ Minecraft server  → 127.0.0.1:${config.MC_PORT}`);
+  log.info(`Minecraft server  -> 127.0.0.1:${config.MC_PORT}`);
 
-  // 2. Start public WebSocket bridge (+ healthcheck endpoint)
   await startWsBridge({ wsPort: config.WS_PORT, mcHost: '127.0.0.1', mcPort: config.MC_PORT });
   const proto = config.CERT_PATH ? 'wss' : 'ws';
-  log.info(`✅ WS bridge         → ${proto}://0.0.0.0:${config.WS_PORT}`);
-  log.info(`🩺 Healthcheck       → GET http://localhost:${config.WS_PORT}/`);
+  log.info(`WS bridge         -> ${proto}://0.0.0.0:${config.WS_PORT}`);
+  log.info(`Healthcheck       -> GET http://localhost:${config.WS_PORT}/`);
 
-  // 3. Start internal admin API
   await startAdminServer(mcServer);
-  log.info(`✅ Admin API         → http://127.0.0.1:${config.ADMIN_PORT}/admin/status`);
+  log.info(`Admin API         -> http://127.0.0.1:${config.ADMIN_PORT}/admin/status`);
 
-  // 4. World auto-save
   startAutosave(mcServer);
 
-  // 5. Load plugins
   const plugins = loadPlugins(mcServer);
-  if (plugins.length) log.info(`🧩 Plugins loaded: ${plugins.join(', ')}`);
+  if (plugins.length) log.info(`Plugins loaded: ${plugins.join(', ')}`);
 
-  log.info('');
-  log.info(`📡 Players: npx webcraft-proxy ${proto}://<your-host>:${config.WS_PORT}`);
-  log.info('');
+  log.info(`Players connect via: npx webcraft-proxy ${proto}://<your-host>:${config.WS_PORT}`);
 }
 
 async function shutdown(signal) {
-  log.warn(`Received ${signal} — shutting down gracefully...`);
+  log.warn(`Received ${signal} - shutting down gracefully...`);
   stopAutosave();
   await stopWsBridge();
   await stopAdminServer();
   await stopMinecraftServer();
-  log.info('Goodbye 👋');
+  log.info('Shutdown complete.');
   process.exit(0);
 }
 

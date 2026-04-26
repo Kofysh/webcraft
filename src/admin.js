@@ -11,7 +11,9 @@
  *   POST /admin/broadcast           Broadcast a chat message to all players
  *
  * Authentication: set ADMIN_TOKEN env var.
- * All requests must include header:  Authorization: Bearer <ADMIN_TOKEN>
+ * All requests must include:  Authorization: Bearer <ADMIN_TOKEN>
+ * If ADMIN_TOKEN is not set, the API rejects all requests in production
+ * (ONLINE_MODE=true) and allows access in dev mode (ONLINE_MODE=false).
  */
 
 'use strict';
@@ -22,11 +24,18 @@ const config = require('./config');
 
 let _adminServer = null;
 
-/**
- * Middleware: verify Bearer token.
- */
 function auth(req, res) {
-  if (!config.ADMIN_TOKEN) return true; // no token set → open (dev mode)
+  // Enforce token when set, or when running in online (production) mode
+  const tokenRequired = config.ADMIN_TOKEN || config.ONLINE_MODE;
+  if (!tokenRequired) return true; // dev mode, no token set
+
+  if (!config.ADMIN_TOKEN) {
+    // Online mode but no token configured - block all access with a clear message
+    res.writeHead(503, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Admin API disabled: set ADMIN_TOKEN in .env' }));
+    return false;
+  }
+
   const header = req.headers['authorization'] || '';
   if (header !== `Bearer ${config.ADMIN_TOKEN}`) {
     res.writeHead(401, { 'Content-Type': 'application/json' });
@@ -44,18 +53,13 @@ function json(res, code, obj) {
 function readBody(req) {
   return new Promise((resolve) => {
     let body = '';
-    req.on('data', (c) => (body += c));
+    req.on('data', (c) => { body += c; });
     req.on('end', () => {
       try { resolve(JSON.parse(body)); } catch { resolve({}); }
     });
   });
 }
 
-/**
- * Start the admin HTTP server.
- * @param {object} mcServer  flying-squid server instance
- * @returns {Promise<http.Server>}
- */
 function startAdminServer(mcServer) {
   return new Promise((resolve, reject) => {
     _adminServer = http.createServer(async (req, res) => {
@@ -64,29 +68,26 @@ function startAdminServer(mcServer) {
       const url    = req.url.split('?')[0];
       const method = req.method;
 
-      // GET /admin/status
       if (method === 'GET' && url === '/admin/status') {
         const players = Object.values(mcServer.players || {}).map((p) => p.username);
         return json(res, 200, {
-          uptime: Math.floor(process.uptime()),
+          uptime:     Math.floor(process.uptime()),
           players,
           maxPlayers: config.MAX_PLAYERS,
-          version: config.MC_VERSION,
+          version:    config.MC_VERSION,
           onlineMode: config.ONLINE_MODE,
         });
       }
 
-      // GET /admin/players
       if (method === 'GET' && url === '/admin/players') {
         const players = Object.values(mcServer.players || {}).map((p) => ({
           username: p.username,
-          ping: p.ping,
-          ip: p.socket?.remoteAddress,
+          ping:     p.ping,
+          ip:       p.socket?.remoteAddress,
         }));
         return json(res, 200, { players });
       }
 
-      // POST /admin/kick/:username
       const kickMatch = url.match(/^\/admin\/kick\/(.+)$/);
       if (method === 'POST' && kickMatch) {
         const username = decodeURIComponent(kickMatch[1]);
@@ -99,7 +100,6 @@ function startAdminServer(mcServer) {
         return json(res, 200, { kicked: username, reason });
       }
 
-      // POST /admin/broadcast
       if (method === 'POST' && url === '/admin/broadcast') {
         const body    = await readBody(req);
         const message = body.message;

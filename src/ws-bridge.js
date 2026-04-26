@@ -1,12 +1,12 @@
 /**
  * ws-bridge.js
- * Public WebSocket/WSS server — the ONLY port exposed to the internet.
+ * Public WebSocket/WSS server - the only port exposed to the internet.
  *
  * Features:
  *  - TLS (WSS) when CERT_PATH + KEY_PATH env vars are set, plain WS otherwise
  *  - Per-IP rate limiting (RATE_LIMIT_MAX connections per minute)
  *  - Active connection counter
- *  - HTTP GET / healthcheck → JSON stats for liveness probes
+ *  - HTTP GET / healthcheck -> JSON stats for liveness probes
  */
 
 'use strict';
@@ -19,11 +19,11 @@ const fs        = require('fs');
 const log       = require('./logger')('WS');
 const config    = require('./config');
 
-const RATE_WINDOW_MS = 60_000;
-const rateLimitMap   = new Map();
-let activeConnections = 0;
-let _wss = null;
-let _httpServer = null;
+const RATE_WINDOW_MS  = 60_000;
+const rateLimitMap    = new Map();
+let   activeConns     = 0;
+let   _wss            = null;
+let   _httpServer     = null;
 
 function checkRateLimit(ip) {
   const now = Date.now();
@@ -42,34 +42,32 @@ setInterval(() => {
     if (now > e.resetAt) rateLimitMap.delete(ip);
 }, RATE_WINDOW_MS).unref();
 
-/**
- * @returns {http.Server|https.Server}
- */
 function createHttpServer() {
   const healthHandler = (req, res) => {
     if (req.method === 'GET' && req.url === '/') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
-        status: 'ok',
-        activeConnections,
-        uptime: Math.floor(process.uptime()),
-        version: config.MC_VERSION,
-        tls: !!(config.CERT_PATH && config.KEY_PATH),
+        status:            'ok',
+        activeConnections: activeConns,
+        uptime:            Math.floor(process.uptime()),
+        version:           config.MC_VERSION,
+        tls:               !!(config.CERT_PATH && config.KEY_PATH),
       }));
     } else {
-      res.writeHead(404); res.end();
+      res.writeHead(404);
+      res.end();
     }
   };
 
   if (config.CERT_PATH && config.KEY_PATH) {
-    log.info('TLS enabled — loading cert and key');
+    log.info('TLS enabled - loading cert and key');
     return https.createServer({
       cert: fs.readFileSync(config.CERT_PATH),
       key:  fs.readFileSync(config.KEY_PATH),
     }, healthHandler);
   }
 
-  log.warn('TLS not configured — running plain WS (set CERT_PATH + KEY_PATH for WSS)');
+  log.warn('TLS not configured - running plain WS (set CERT_PATH + KEY_PATH for WSS)');
   return http.createServer(healthHandler);
 }
 
@@ -90,8 +88,8 @@ function startWsBridge({ wsPort = config.WS_PORT, mcHost = '127.0.0.1', mcPort =
         return;
       }
 
-      activeConnections++;
-      log.info(`🔌 ${ip} connected (active: ${activeConnections})`);
+      activeConns++;
+      log.info(`[connect] ${ip} (active: ${activeConns})`);
 
       const tcp = net.createConnection({ host: mcHost, port: mcPort });
 
@@ -99,8 +97,8 @@ function startWsBridge({ wsPort = config.WS_PORT, mcHost = '127.0.0.1', mcPort =
       tcp.on('data',    (chunk) => { if (ws.readyState === WebSocket.OPEN) ws.send(chunk); });
 
       const cleanup = (reason) => {
-        activeConnections = Math.max(0, activeConnections - 1);
-        log.info(`🔌 ${ip} disconnected — ${reason} (active: ${activeConnections})`);
+        activeConns = Math.max(0, activeConns - 1);
+        log.info(`[disconnect] ${ip} - ${reason} (active: ${activeConns})`);
         if (tcp.writable)                        tcp.destroy();
         if (ws.readyState !== WebSocket.CLOSED)  ws.close();
       };

@@ -1,0 +1,14 @@
+node_modules/
+.env
+*.log
+world/
+data/
+coverage/
+.nyc_output/
+tests/
+.github/
+railway.json
+render.yaml
+.gitignore
+*.md
+!README.md
