@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: webcraft
+    runtime: node
+    buildCommand: npm install
+    startCommand: node src/index.js
+    envVars:
+      - key: WS_PORT
+        value: 8080
+      - key: MC_PORT
+        value: 25565
+      - key: MC_VERSION
+        value: 1.20.4
+      - key: ONLINE_MODE
+        value: "true"
+      - key: MAX_PLAYERS
+        value: "20"
+      - key: VIEW_DISTANCE
+        value: "8"

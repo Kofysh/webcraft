@@ -8,9 +8,23 @@
     "dev": "nodemon src/index.js",
     "test": "jest"
   },
-  "keywords": ["minecraft", "server", "websocket", "web-hosting", "nodejs", "prismarine"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Kofysh/webcraft.git"
+  },
+  "keywords": [
+    "minecraft",
+    "server",
+    "websocket",
+    "web-hosting",
+    "nodejs",
+    "prismarine",
+    "flying-squid",
+    "open-source"
+  ],
   "license": "MIT",
   "dependencies": {
+    "dotenv": "^16.4.5",
     "flying-squid": "^1.7.0",
     "minecraft-data": "^3.63.0",
     "prismarine-world": "^2.1.0",
