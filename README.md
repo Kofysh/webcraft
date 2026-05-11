@@ -74,7 +74,7 @@ All settings live in `.env` (see `.env.example`):
 | `CERT_PATH` | — | TLS certificate path (enables WSS) |
 | `KEY_PATH` | — | TLS private key path |
 | `MC_PORT` | `25565` | Internal Minecraft port (loopback only) |
-| `MC_VERSION` | `1.20.4` | Minecraft version |
+| `MC_VERSION` | `1.20.6` | Minecraft version |
 | `ONLINE_MODE` | `true` | Require Mojang auth |
 | `MAX_PLAYERS` | `20` | Slot limit |
 | `VIEW_DISTANCE` | `8` | Render distance |

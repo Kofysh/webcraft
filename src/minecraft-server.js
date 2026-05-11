@@ -5,8 +5,7 @@
 
 'use strict';
 
-const { createServer } = require('flying-squid');
-const World  = require('prismarine-world');
+const { createMCServer } = require('flying-squid');
 const log    = require('./logger')('MC');
 const config = require('./config');
 
@@ -14,15 +13,17 @@ let _server = null;
 
 function startMinecraftServer({ port = config.MC_PORT, version = config.MC_VERSION, onlineMode = config.ONLINE_MODE } = {}) {
   return new Promise((resolve, reject) => {
-    const world  = new World({});
-    const server = createServer({
-      world, version, onlineMode,
-      encryption:   onlineMode,
-      host:         '127.0.0.1',
+    const server = createMCServer({
+      version,
+      'online-mode': onlineMode,
+      encryption:    onlineMode,
+      host:          '127.0.0.1',
       port,
-      maxPlayers:   config.MAX_PLAYERS,
-      viewDistance: config.VIEW_DISTANCE,
-      motd:         config.MOTD,
+      'max-players': config.MAX_PLAYERS,
+      'view-distance': config.VIEW_DISTANCE,
+      motd:          config.MOTD,
+      worldFolder:   config.WORLD_DIR,
+      plugins:       {},
     });
 
     _server = server;

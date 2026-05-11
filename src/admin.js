@@ -684,13 +684,13 @@ document.querySelectorAll('.modal-overlay').forEach(o=>o.addEventListener('click
 function pingBadge(ping){
   if(!ping)return '<span class="ping-bar"><span class="ping-dot ping-good"></span>-</span>';
   const cls=ping<80?'ping-good':ping<200?'ping-med':'ping-bad';
-  return `<span class="ping-bar"><span class="ping-dot ${cls}"></span>${ping}ms</span>`;
+  return \`<span class="ping-bar"><span class="ping-dot \${cls}"></span>\${ping}ms</span>\`;
 }
 
 // --- Player rows ---
 function playerRow(p,actions=true){
-  const a=actions?`<button class="btn btn-warn btn-sm" onclick="openKick('${esc(p.username)}')">Kick</button> <button class="btn btn-danger btn-sm" onclick="openBanModal('${esc(p.username)}')">Ban</button>`:'';
-  return `<tr><td><span class="badge badge-online">${esc(p.username)}</span></td><td>${pingBadge(p.ping)}</td><td><code style="font-size:.72rem;color:var(--text2)">${esc(p.ip||'—')}</code></td><td>${a}</td></tr>`;
+  const a=actions?\`<button class="btn btn-warn btn-sm" onclick="openKick('\${esc(p.username)}')">Kick</button> <button class="btn btn-danger btn-sm" onclick="openBanModal('\${esc(p.username)}')">Ban</button>\`:'';
+  return \`<tr><td><span class="badge badge-online">\${esc(p.username)}</span></td><td>\${pingBadge(p.ping)}</td><td><code style="font-size:.72rem;color:var(--text2)">\${esc(p.ip||'—')}</code></td><td>\${a}</td></tr>\`;
 }
 
 // --- Refresh ---
@@ -724,21 +724,21 @@ async function refresh(){
     // Bans
     const bb=document.getElementById('bans-body');
     const be=Object.entries(bans.bans||{});
-    bb.innerHTML=be.length?be.map(([n,e])=>`<tr>
-      <td><span class="badge badge-banned">${esc(n)}</span></td>
-      <td style="color:var(--text2)">${esc(e.reason||'—')}</td>
-      <td style="color:var(--muted)">${esc(e.bannedBy||'—')}</td>
-      <td style="color:var(--muted);font-size:.75rem">${fmtDate(e.at)}</td>
-      <td><button class="btn btn-success btn-sm" onclick="unban('${esc(n)}')">Unban</button></td>
-    </tr>`).join(''):'<tr><td colspan="5" class="empty-state">No active bans</td></tr>';
+    bb.innerHTML=be.length?be.map(([n,e])=>\`<tr>
+      <td><span class="badge badge-banned">\${esc(n)}</span></td>
+      <td style="color:var(--text2)">\${esc(e.reason||'—')}</td>
+      <td style="color:var(--muted)">\${esc(e.bannedBy||'—')}</td>
+      <td style="color:var(--muted);font-size:.75rem">\${fmtDate(e.at)}</td>
+      <td><button class="btn btn-success btn-sm" onclick="unban('\${esc(n)}')">Unban</button></td>
+    </tr>\`).join(''):'<tr><td colspan="5" class="empty-state">No active bans</td></tr>';
     // Whitelist
     const wtog=document.getElementById('wl-toggle');
     wtog.checked=!!wl.enabled;
     const wb=document.getElementById('wl-body');
-    wb.innerHTML=(wl.players||[]).length?(wl.players||[]).map(p=>`<tr>
-      <td><span class="badge badge-online">${esc(p)}</span></td>
-      <td><button class="btn btn-danger btn-sm" onclick="wlRemove('${esc(p)}')">Remove</button></td>
-    </tr>`).join(''):'<tr><td colspan="2" class="empty-state">Whitelist is empty</td></tr>';
+    wb.innerHTML=(wl.players||[]).length?(wl.players||[]).map(p=>\`<tr>
+      <td><span class="badge badge-online">\${esc(p)}</span></td>
+      <td><button class="btn btn-danger btn-sm" onclick="wlRemove('\${esc(p)}')">Remove</button></td>
+    </tr>\`).join(''):'<tr><td colspan="2" class="empty-state">Whitelist is empty</td></tr>';
   }catch(e){console.error(e);}
 }
 

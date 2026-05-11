@@ -32,7 +32,7 @@ describe('config', () => {
 
     expect(config.WS_PORT).toBe(8080);
     expect(config.MC_PORT).toBe(25565);
-    expect(config.MC_VERSION).toBe('1.20.4');
+    expect(config.MC_VERSION).toBe('1.20.6');
     expect(config.ONLINE_MODE).toBe(true);
     expect(config.MAX_PLAYERS).toBe(20);
     expect(config.VIEW_DISTANCE).toBe(8);

@@ -38,7 +38,7 @@ const config = {
 
   // Internal Minecraft server
   MC_PORT:        int('MC_PORT', 25565),
-  MC_VERSION:     process.env.MC_VERSION || '1.20.4',
+  MC_VERSION:     process.env.MC_VERSION || '1.20.6',
   ONLINE_MODE:    bool('ONLINE_MODE', true),
   MAX_PLAYERS:    int('MAX_PLAYERS', 20),
   VIEW_DISTANCE:  int('VIEW_DISTANCE', 8),
