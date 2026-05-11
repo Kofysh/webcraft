@@ -1,0 +1,12 @@
+*** Begin Patch
+*** Update File: node_modules/prismarine-provider-anvil/src/level.js
+@@
+-const parseAsync = promisify(nbt.parse)
++const parseAsync = (data, format) => new Promise((resolve, reject) => {
++  nbt.parse(data, format, (err, parsed) => {
++    if (err) return reject(err)
++    resolve(parsed)
++  })
++})
+ const writeAsync = promisify(write)
+*** End Patch
